@@ -35,7 +35,7 @@
 # define O_PATH 010000000
 #endif
 
-static void skel(const char *homedir, uid_t u, gid_t g) {
+void skel(const char *homedir, uid_t u, gid_t g) {
 	char *fname;
 
 	// zsh
@@ -109,7 +109,7 @@ static void skel(const char *homedir, uid_t u, gid_t g) {
 	}
 }
 
-static int store_xauthority(void) {
+int store_xauthority(void) {
 	if (arg_x11_block)
 		return 0;
 
@@ -120,15 +120,15 @@ static int store_xauthority(void) {
 		errExit("asprintf");
 
 	struct stat s;
-	if (stat(src, &s) == 0) {
-		if (is_link(src)) {
+	if (lstat(src, &s) == 0) {
+		if (S_ISLNK(s.st_mode)) {
 			fwarning("invalid .Xauthority file\n");
 			free(src);
 			return 0;
 		}
 
 		// create an empty file as root, and change ownership to user
-		FILE *fp = fopen(dest, "w");
+		FILE *fp = fopen(dest, "wxe");
 		if (fp) {
 			fprintf(fp, "\n");
 			SET_PERMS_STREAM(fp, getuid(), getgid(), 0600);
@@ -147,7 +147,7 @@ static int store_xauthority(void) {
 	return 0;
 }
 
-static int store_asoundrc(void) {
+int store_asoundrc(void) {
 	if (arg_nosound)
 		return 0;
 
@@ -158,8 +158,8 @@ static int store_asoundrc(void) {
 		errExit("asprintf");
 
 	struct stat s;
-	if (stat(src, &s) == 0) {
-		if (is_link(src)) {
+	if (lstat(src, &s) == 0) {
+		if (S_ISLNK(s.st_mode)) {
 			// make sure the real path of the file is inside the home directory
 			/* coverity[toctou] */
 			char* rp = realpath(src, NULL);
@@ -175,7 +175,7 @@ static int store_asoundrc(void) {
 		}
 
 		// create an empty file as root, and change ownership to user
-		FILE *fp = fopen(dest, "w");
+		FILE *fp = fopen(dest, "wxe");
 		if (fp) {
 			fprintf(fp, "\n");
 			SET_PERMS_STREAM(fp, getuid(), getgid(), 0644);
@@ -194,7 +194,7 @@ static int store_asoundrc(void) {
 	return 0;
 }
 
-static void copy_xauthority(void) {
+void copy_xauthority(void) {
 	// copy XAUTHORITY_FILE in the new home directory
 	char *src = RUN_XAUTHORITY_FILE ;
 	char *dest;
@@ -215,7 +215,7 @@ static void copy_xauthority(void) {
 	unlink(src);
 }
 
-static void copy_asoundrc(void) {
+void copy_asoundrc(void) {
 	// copy ASOUNDRC_FILE in the new home directory
 	char *src = RUN_ASOUNDRC_FILE ;
 	char *dest;
@@ -352,7 +352,7 @@ void fs_private(void) {
 		if (arg_debug)
 			printf("Mounting a new /home directory\n");
 		if (arg_allusers)
-			fwarning("allusers option disabled by private or whitelist option\n");
+			fwarning("allusers option disabled by private option\n");
 		if (mount("tmpfs", "/home", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_STRICTATIME,  "mode=755,gid=0") < 0)
 			errExit("mounting /home directory");
 		fs_logger("tmpfs /home");

@@ -147,7 +147,7 @@ void drop_privs(int nogroups) {
 
 
 int mkpath_as_root(const char* path) {
-	assert(path && *path);
+	assert(path && *path == '/');
 
 	// work on a copy of the path
 	char *file_path = strdup(path);
@@ -438,46 +438,25 @@ int is_link(const char *fname) {
 	if (*fname == '\0')
 		return 0;
 
-	char *dup = NULL;
+	char *p = NULL;
 	struct stat s;
 	if (lstat(fname, &s) == 0) {
 		if (S_ISLNK(s.st_mode))
 			return 1;
 		if (S_ISDIR(s.st_mode)) {
 			// remove trailing slashes and single dots and try again
-			dup = strdup(fname);
-			if (!dup)
-				errExit("strdup");
-			trim_trailing_slash_or_dot(dup);
-			if (lstat(dup, &s) == 0) {
+			char *p = clean_pathname(fname);
+			assert(p);
+			if (lstat(p, &s) == 0) {
 				if (S_ISLNK(s.st_mode)) {
-					free(dup);
+					free(p);
 					return 1;
 				}
 			}
 		}
 	}
-
-	free(dup);
+	free(p);
 	return 0;
-}
-
-// remove all slashes and single dots from the end of a path
-// for example /foo/bar///././. -> /foo/bar
-void trim_trailing_slash_or_dot(char *path) {
-	assert(path);
-
-	char *end = strchr(path, '\0');
-	if ((end - path) > 1) {
-		end--;
-		while (*end == '/' ||
-		      (*end == '.' && *(end - 1) == '/')) {
-			*end = '\0';
-			end--;
-			if (end == path)
-				break;
-		}
-	}
 }
 
 // remove multiple spaces and return allocated memory
@@ -546,39 +525,35 @@ char *split_comma(char *str) {
 	return ptr;
 }
 
-
-// remove consecutive and trailing slashes
-// and return allocated memory
-// e.g. /home//user/ -> /home/user
+// * remove consecutive slashes
+// * remove trailing slash
+// * remove "/./" segments or a final "/."
 char *clean_pathname(const char *path) {
-	assert(path);
-	size_t len = strlen(path);
-	char *rv = malloc(len + 1);
+	// no relative path
+	assert(path && path[0] == '/');
+
+	char *dup = strdup(path);
+	if (!dup)
+		errExit("strdup");
+	char *rv = malloc(strlen(dup) + 1);
 	if (!rv)
 		errExit("malloc");
 
-	if (len > 0) {
-		size_t i = 0, j = 0, cnt = 0;
-		for (; i < len; i++) {
-			if (path[i] == '/')
-				cnt++;
-			else
-				cnt = 0;
-
-			if (cnt < 2) {
-				rv[j] = path[i];
-				j++;
-			}
+	char *i = rv;
+	*i++ = '/';
+	char *tok;
+	for (tok=strtok(dup, "/"); tok; tok=strtok(NULL, "/")) {
+		if (tok[0] != '.' || tok[1] != '\0') {
+			i = stpcpy(i, tok);
+			*i++ = '/';
 		}
-		rv[j] = '\0';
-
-		// remove a trailing slash
-		if (j > 1 && rv[j - 1] == '/')
-			rv[j - 1] = '\0';
 	}
-	else
-		*rv = '\0';
 
+	if (i - rv == 1) // root directory
+		i[0] = '\0';
+	else // at least one token copied
+		i[-1] = '\0';
+	free(dup);
 	return rv;
 }
 

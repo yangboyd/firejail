@@ -121,23 +121,6 @@ typedef struct interface_t {
 typedef struct profile_entry_t {
 	struct profile_entry_t *next;
 	char *data;	// command
-
-	// whitelist command parameters
-	char *link;	// link name - set if the file is a link
-	enum {
-		WLDIR_HOME = 1,	// whitelist in home directory
-		WLDIR_TMP,	// whitelist in /tmp directory
-		WLDIR_MEDIA,	// whitelist in /media directory
-		WLDIR_MNT,	// whitelist in /mnt directory
-		WLDIR_VAR,	// whitelist in /var directory
-		WLDIR_DEV,	// whitelist in /dev directory
-		WLDIR_OPT,	// whitelist in /opt directory
-		WLDIR_SRV,	// whitelist in /srv directory
-		WLDIR_ETC,	// whitelist in /etc directory
-		WLDIR_SHARE,	// whitelist in /usr/share directory
-		WLDIR_MODULE,	// whitelist in /sys/module directory
-		WLDIR_RUN	// whitelist in /run/user/$uid directory
-	} wldir;
 } ProfileEntry;
 
 typedef struct config_t {
@@ -467,7 +450,6 @@ void copy_file_from_user_to_root(const char *srcname, const char *destname, uid_
 void touch_file_as_user(const char *fname, mode_t mode);
 int is_dir(const char *fname);
 int is_link(const char *fname);
-void trim_trailing_slash_or_dot(char *path);
 char *line_remove_spaces(const char *buf);
 char *split_comma(char *str);
 char *clean_pathname(const char *path);
