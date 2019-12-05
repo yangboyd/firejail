@@ -627,20 +627,21 @@ void fs_whitelist(void) {
 		assert(pattern);
 		if (*pattern != '/') {
 			if (macro_id(pattern) != -1) { // macro is valid, but was not resolved
-				unresolved_macro = 1;
 				struct stat s;
-				if (!arg_quiet && !nowhitelist_flag && stat(cfg.homedir, &s) == 0) {
-					fprintf(stderr, "***\n");
-					fprintf(stderr, "*** Warning: cannot whitelist %s directory\n", pattern);
-					fprintf(stderr, "*** Any file saved in this directory will be lost when the sandbox is closed.\n");
-					fprintf(stderr, "***\n");
+				if (!nowhitelist_flag && stat(cfg.homedir, &s) == 0) {
+					unresolved_macro = 1;
+					if (!arg_quiet) {
+						fprintf(stderr, "***\n");
+						fprintf(stderr, "*** Warning: cannot whitelist %s directory\n", pattern);
+						fprintf(stderr, "*** Any file saved in this directory will be lost when the sandbox is closed.\n");
+						fprintf(stderr, "***\n");
+					}
 				}
 				entry = entry->next;
 				free(pattern);
 				continue;
 			}
-			else
-				whitelist_err(pattern);
+			whitelist_err(pattern);
 		}
 
 		if (arg_debug || arg_debug_whitelists)
