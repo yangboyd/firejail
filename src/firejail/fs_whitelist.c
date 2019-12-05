@@ -309,8 +309,10 @@ static int nowhitelist_match(const char *path) {
 		if (result == FNM_NOMATCH)
 			continue;
 		else if (result == 0) {
-			if (arg_debug || arg_debug_whitelists)
-				printf("Skip nowhitelisted path %s\n", path);
+			if (arg_debug || arg_debug_whitelists) {
+				printf("Removed whitelist path: %s\n", path);
+				printf("\tnowhitelisted\n");
+			}
 			return 1;
 		}
 		else {
@@ -645,7 +647,7 @@ void fs_whitelist(void) {
 		}
 
 		if (arg_debug || arg_debug_whitelists)
-			printf("Debug %d: %s pattern: %s\n", __LINE__, (nowhitelist_flag)? "nowhitelist": "whitelist", pattern);
+			printf("%s pattern: %s\n", (nowhitelist_flag)? "nowhitelist": "whitelist", pattern);
 
 		// store pattern in nowhitelist array
 		if (nowhitelist_flag) {
@@ -672,8 +674,11 @@ void fs_whitelist(void) {
 
 	size_t i;
 	for (i = 0; i < globbuf.gl_pathc; i++) {
-		// /home/me/.* can glob to /home/me/.. which would resolve to /home/
 		assert(globbuf.gl_pathv[i]);
+		if (arg_debug || arg_debug_whitelists)
+			printf("expanded whitelist pattern: %s\n", globbuf.gl_pathv[i]);
+
+		// /home/me/.* can glob to /home/me/.. which would resolve to /home/
 		const char *base = gnu_basename(globbuf.gl_pathv[i]);
 		if (strcmp(base, ".") == 0 || strcmp(base, "..") == 0)
 			continue;
