@@ -35,7 +35,6 @@
 // 2. run firejail --whitelist=/any/directory
 //#define TEST_MOUNTINFO
 
-static int unresolved_macro = 0;
 static int init_home = 0;
 
 static char **whitelist = NULL;
@@ -342,20 +341,9 @@ static void init_tmpfs(const char *dir, int fd) {
 			free(pamtmpdir);
 		}
 	}
+	// create empty user-owned /run/user/$UID directory and
 	// whitelist /run/firejail directory using a file descriptor
-	// and create empty user-owned /run/user/$UID directory
 	else if (strcmp(dir, "/run") == 0) {
-		if (mkdir(RUN_FIREJAIL_DIR, 0755) == -1)
-			errExit("mkdir");
-		assert(fd != -1);
-		char *proc;
-		if (asprintf(&proc, "/proc/self/fd/%d", fd) == -1)
-			errExit("asprintf");
-		if (mount(proc, RUN_FIREJAIL_DIR, NULL, MS_BIND|MS_REC, NULL) < 0)
-			errExit("mount bind");
-		free(proc);
-		fs_logger2("whitelist", RUN_FIREJAIL_DIR);
-
 		mkdir_attr("/run/user", 0755, 0, 0);
 		fs_logger2("mkdir", "/run/user");
 		char *runuser;
@@ -364,6 +352,15 @@ static void init_tmpfs(const char *dir, int fd) {
 		mkdir_attr(runuser, 0700, getuid(), getgid());
 		fs_logger2("mkdir", runuser);
 		free(runuser);
+
+		mkdir_attr(RUN_FIREJAIL_DIR, 0755, 0, 0);
+		char *proc;
+		if (asprintf(&proc, "/proc/self/fd/%d", fd) == -1)
+			errExit("asprintf");
+		if (mount(proc, RUN_FIREJAIL_DIR, NULL, MS_BIND|MS_REC, NULL) < 0)
+			errExit("mount bind");
+		free(proc);
+		fs_logger2("whitelist", RUN_FIREJAIL_DIR);
 	}
 
 	// create empty home directory
@@ -376,8 +373,10 @@ static void init_tmpfs(const char *dir, int fd) {
 			int fd = safe_fd(newname, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
 			free(newname);
 			if (fd == -1) {
-				fwarning("cannot create home directory\n");
-				return;
+				if (errno == ENOENT)
+					return;
+				fprintf(stderr, "Error: cannot open home directory\n");
+				exit(1);
 			}
 			// read directory ownership and permissions
 			struct stat s;
@@ -386,18 +385,16 @@ static void init_tmpfs(const char *dir, int fd) {
 			close(fd);
 
 			// create a new home directory
-			if (mkdir(cfg.homedir, 0700) == -1) {
-				if (errno == ENOENT) {
-					if (mkpath_as_root(cfg.homedir) == -1)
-						errExit("mkpath");
-					if (mkdir(cfg.homedir, 0700) == -1)
-						errExit("mkdir");
-				}
-				else if (errno != EEXIST)
+			assert(strncmp(cfg.homedir, RUN_FIREJAIL_DIR, strlen(RUN_FIREJAIL_DIR)) != 0 ||
+			      (cfg.homedir[strlen(RUN_FIREJAIL_DIR)] != '/' && cfg.homedir[strlen(RUN_FIREJAIL_DIR)] != '\0'));
+			int rv = mkdir(cfg.homedir, 0700);
+			if (rv == -1) {
+				if (mkpath_as_root(cfg.homedir) == -1)
+					errExit("mkpath");
+				if ((rv = mkdir(cfg.homedir, 0700)) == -1 && errno != EEXIST)
 					errExit("mkdir");
 			}
-			// set ownership and permissions
-			if (set_perms(cfg.homedir, s.st_uid, s.st_gid, s.st_mode & 07777))
+			if (rv == 0 && set_perms(cfg.homedir, s.st_uid, s.st_gid, s.st_mode & 07777))
 				errExit("chmod/chown");
 		}
 		else if (cfg.homedir[len] != '\0')
@@ -456,8 +453,10 @@ static void mount_tmpfs(const char *dir) {
 static int check_topdir(const char *path) {
 	assert(path);
 
-	if (path[0] != '/' || path[1] == '\0')
-		return 1;
+	if (path[0] != '/' || path[1] == '\0') { // assert(strlen(path) > 1)
+		fprintf(stderr, "Error: invalid whitelist top level directory \"%s\"\n", path);
+		exit(1);
+	}
 
 	// /proc and /sys are not allowed
 	static char *deny_whitelist[] = {"/proc", "/sys", NULL};
@@ -606,8 +605,9 @@ void fs_whitelist(void) {
 	if (!topdirs)
 		errExit("malloc");
 	glob_t globbuf;
-	int globflags = GLOB_PERIOD | GLOB_NOSORT | GLOB_NOCHECK;
 	// GLOB_NOCHECK in order to have proper error codes from realpath
+	int globflags = GLOB_PERIOD | GLOB_NOSORT | GLOB_NOCHECK;
+	int unresolved_macro = 0;
 
 	// expand macros, fill nowhitelist array, globbing
 	while (entry) {
@@ -690,12 +690,12 @@ void fs_whitelist(void) {
 		char *path = clean_pathname(globbuf.gl_pathv[i]);
 
 		// path should not be a top level directory or the root directory
-		assert(!strstr(path, ".."));
+		assert(path && path[0] == '/' && !strstr(path, ".."));
 		if (!strchr(path+1, '/'))
 			whitelist_err(path);
 
-		// identify the top level directory and store it in an array
-		// returns length of top level directory string
+		// identify the top level directory, run some checks against the string
+		// and store it in an array; returns length of top level directory string
 		size_t len = store_topdir(path);
 
 		// resolve path and add it to the whitelist array ...
@@ -785,4 +785,5 @@ void fs_whitelist(void) {
 	// mask RUN_WHITELIST_DIR
 	if (mount("tmpfs", RUN_WHITELIST_DIR, "tmpfs", MS_NOSUID | MS_STRICTATIME,  "mode=755,gid=0") < 0)
 		errExit("masking " RUN_WHITELIST_DIR);
+	fs_logger2("tmpfs", RUN_WHITELIST_DIR);
 }
