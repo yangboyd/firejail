@@ -474,7 +474,7 @@ static size_t store_topdir(const char *path) {
 
 	// identify the top level directory
 	// note: this function is called also when there unresolved macros,
-	// it is possible that home is a top level directory already
+	// so it is possible that path/dup is a top level directory already
 	assert(dup[0] == '/');
 	char *p = strchr(dup+1, '/');
 	if (p)
@@ -579,21 +579,15 @@ void fs_whitelist(void) {
 		return;
 
 	EUID_USER();
-	whitelist = malloc(whitelist_m * sizeof(*whitelist));
-	if (!whitelist)
-		errExit("malloc");
+	// allocate memory for nowhitelist
 	nowhitelist = malloc(nowhitelist_m * sizeof(*nowhitelist));
 	if (!nowhitelist)
 		errExit("malloc");
-	linklist = malloc(linklist_m * sizeof(*linklist));
-	if (!linklist)
-		errExit("malloc");
-	topdirs = malloc(topdirs_m * sizeof(*topdirs));
-	if (!topdirs)
-		errExit("malloc");
-	glob_t globbuf;
-	// GLOB_NOCHECK in order to have proper error codes from realpath
+	// GLOB_NOCHECK in order to have proper error codes from realpath later
 	int globflags = GLOB_PERIOD | GLOB_NOSORT | GLOB_NOCHECK;
+	glob_t globbuf;
+	memset(&globbuf, 0, sizeof(globbuf));
+
 	int unresolved_macro = 0;
 
 	// expand macros, fill nowhitelist array, globbing
@@ -638,19 +632,22 @@ void fs_whitelist(void) {
 
 		// store pattern in nowhitelist array
 		if (nowhitelist_flag) {
-			nowhitelist[nowhitelist_c++] = pattern;
-			if (nowhitelist_c >= nowhitelist_m) {
+			nowhitelist[nowhitelist_c] = pattern;
+			if (++nowhitelist_c >= nowhitelist_m) {
 				nowhitelist_m *= 2;
 				nowhitelist = realloc(nowhitelist, sizeof(*nowhitelist) * nowhitelist_m);
-				if (nowhitelist == NULL)
+				if (!nowhitelist)
 					errExit("realloc");
 			}
 			entry = entry->next;
 			continue;
 		}
 
-		// globbing
+		// whitelist globbing
+		errno = 0;
 		if (glob(pattern, globflags, NULL, &globbuf) != 0) {
+			if (errno)
+				perror("glob");
 			fprintf(stderr, "Error: failed to glob pattern %s\n", pattern);
 			exit(1);
 		}
@@ -658,6 +655,28 @@ void fs_whitelist(void) {
 		entry = entry->next;
 		free(pattern);
 	}
+
+	// return if there are no whitelist commands
+	if (globbuf.gl_pathc == 0) {
+		// release memory
+		size_t i;
+		for (i = 0; i < nowhitelist_c; i++)
+			free(nowhitelist[i]);
+		free(nowhitelist);
+		EUID_ROOT();
+		return;
+	}
+
+	// allocate memory
+	topdirs = malloc(topdirs_m * sizeof(*topdirs));
+	if (!topdirs)
+		errExit("malloc");
+	whitelist = malloc(whitelist_m * sizeof(*whitelist));
+	if (!whitelist)
+		errExit("malloc");
+	linklist = malloc(linklist_m * sizeof(*linklist));
+	if (!linklist)
+		errExit("malloc");
 
 	size_t i;
 	for (i = 0; i < globbuf.gl_pathc; i++) {
