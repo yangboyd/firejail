@@ -264,7 +264,7 @@ static int has_link(const char *dir) {
 
 static void check_homedir(void) {
 	assert(cfg.homedir);
-	if (cfg.homedir[0] != '/') {
+	if (cfg.homedir[0] != '/' || cfg.homedir[1] == '\0') {
 		fprintf(stderr, "Error: invalid user directory \"%s\"\n", cfg.homedir);
 		exit(1);
 	}

@@ -341,7 +341,7 @@ static void init_tmpfs(const char *dir, int fd) {
 			free(pamtmpdir);
 		}
 	}
-	// create empty user-owned /run/user/$UID directory and
+	// create empty user-owned /run/user/$UID directory
 	// whitelist /run/firejail directory using a file descriptor
 	else if (strcmp(dir, "/run") == 0) {
 		mkdir_attr("/run/user", 0755, 0, 0);
@@ -373,7 +373,7 @@ static void init_tmpfs(const char *dir, int fd) {
 			int fd = safe_fd(newname, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
 			free(newname);
 			if (fd == -1) {
-				if (errno == ENOENT)
+				if (errno == ENOENT) // nothing to do if home directory does not exist
 					return;
 				fprintf(stderr, "Error: cannot open home directory\n");
 				exit(1);
@@ -394,6 +394,7 @@ static void init_tmpfs(const char *dir, int fd) {
 				if ((rv = mkdir(cfg.homedir, 0700)) == -1 && errno != EEXIST)
 					errExit("mkdir");
 			}
+			// set ownership and permissions
 			if (rv == 0 && set_perms(cfg.homedir, s.st_uid, s.st_gid, s.st_mode & 07777))
 				errExit("chmod/chown");
 		}
@@ -449,65 +450,51 @@ static void mount_tmpfs(const char *dir) {
 	}
 }
 
-// return 0 if the top level directory is allowed, otherwise return 1
-static int check_topdir(const char *path) {
+// exit if the top level directory is not allowed
+// todo: expose this in firejail configuration file
+static void check_topdir(const char *path) {
 	assert(path);
-
-	if (path[0] != '/' || path[1] == '\0') { // assert(strlen(path) > 1)
-		fprintf(stderr, "Error: invalid whitelist top level directory \"%s\"\n", path);
-		exit(1);
-	}
-
-	// /proc and /sys are not allowed
-	static char *deny_whitelist[] = {"/proc", "/sys", NULL};
+	static char *deny_whitelist[] = {"/", "/proc", "/sys", NULL};
 
 	size_t i;
 	for (i = 0; deny_whitelist[i]; i++) {
-		if (strcmp(path, deny_whitelist[i]) == 0)
-			return 1;
+		if (strcmp(path, deny_whitelist[i]) == 0) {
+			fprintf(stderr, "Error: invalid whitelist top level directory \"%s\"\n", path);
+			exit(1);
+		}
 	}
-	return 0;
 }
 
-static size_t store_topdir(char *path) {
+static size_t store_topdir(const char *path) {
 	EUID_ASSERT();
-	char *top = NULL;
+	assert(path);
+	char *dup = strdup(path);
+	if (!dup)
+		errExit("strdup");
 
-	assert(path && path[0] == '/');
-	char *p = strchr(path+1, '/');
-	if (p) {
-		// identify the top level directory
+	// identify the top level directory
+	// note: this function is called also when there unresolved macros,
+	// it is possible that home is a top level directory already
+	assert(dup[0] == '/');
+	char *p = strchr(dup+1, '/');
+	if (p)
 		*p = '\0';
-		top = strdup(path);
-		if (!top)
-			errExit("strdup");
-		*p = '/';
-	}
-	else {
-		// we get here when there are
-		// unresolved macros and home directory
-		// is a top level directory
-		top = strdup(path);
-		if (!top)
-			errExit("strdup");
-	}
-	// some top level directories are not allowed
-	if (check_topdir(top))
-		whitelist_err(path);
 
-	// return length of top string
-	size_t rv = strlen(top);
+	// return length of top level directory string
+	size_t rv = strlen(dup);
 
 	// is top level directory in topdirs array?
-	// add it if necessary
 	size_t i;
 	for (i = 0; i < topdirs_c; i++) {
-		if (strcmp(top, topdirs[i]) == 0) {
-			free(top);
+		if (strcmp(dup, topdirs[i]) == 0) {
+			free(dup);
 			return rv;
 		}
 	}
-	topdirs[topdirs_c] = top;
+	// some top level directories are not allowed
+	check_topdir(dup);
+	// add top level directory to topdirs array
+	topdirs[topdirs_c] = dup;
 	if (++topdirs_c >= topdirs_m) {
 		topdirs_m *= 2;
 		topdirs = realloc(topdirs, sizeof(*topdirs) * topdirs_m);
