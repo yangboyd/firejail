@@ -366,6 +366,7 @@ static void init_tmpfs(const char *dir, int fd) {
 	// create empty home directory
 	if (strncmp(dir, cfg.homedir, len) == 0) {
 		if (cfg.homedir[len] == '/') {
+			assert(init_home == 0);
 			char *newname;
 			if (asprintf(&newname, "%s%s", RUN_WHITELIST_DIR, cfg.homedir) == -1)
 				errExit("asprintf");
@@ -425,7 +426,7 @@ static void mount_tmpfs(const char *dir) {
 
 			// open /run/firejail, so we can bring back the directory after a tmpfs is mounted on /run
 			if (strcmp(dir, "/run") == 0) {
-				fd = open(RUN_FIREJAIL_DIR, O_PATH|O_DIRECTORY|O_CLOEXEC);
+				fd = safe_fd(RUN_FIREJAIL_DIR, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
 				if (fd == -1)
 					errExit("opening " RUN_FIREJAIL_DIR);
 			}
@@ -473,7 +474,7 @@ static size_t store_topdir(const char *path) {
 		errExit("strdup");
 
 	// identify the top level directory
-	// note: this function is called also when there unresolved macros,
+	// note: this function is called also when there are unresolved macros,
 	// so it is possible that path/dup is a top level directory already
 	assert(dup[0] == '/');
 	char *p = strchr(dup+1, '/');
@@ -580,17 +581,15 @@ void fs_whitelist(void) {
 
 	EUID_USER();
 	// allocate memory for nowhitelist
-	nowhitelist = malloc(nowhitelist_m * sizeof(*nowhitelist));
+	nowhitelist = calloc(nowhitelist_m, sizeof(*nowhitelist));
 	if (!nowhitelist)
 		errExit("malloc");
-	// GLOB_NOCHECK in order to have proper error codes from realpath later
+
 	int globflags = GLOB_PERIOD | GLOB_NOSORT | GLOB_NOCHECK;
 	glob_t globbuf;
 	memset(&globbuf, 0, sizeof(globbuf));
 
-	int unresolved_macro = 0;
-
-	// expand macros, fill nowhitelist array, globbing
+	// expand macros, fill nowhitelist array and glob array
 	while (entry) {
 		int nowhitelist_flag = 0;
 
@@ -604,28 +603,12 @@ void fs_whitelist(void) {
 			continue;
 		}
 		char *dataptr = (nowhitelist_flag)? entry->data + 12: entry->data + 10;
+		if (*dataptr == '\0')
+			whitelist_err(dataptr);
 
 		// replace ~/ into /home/username or try to resolve macro
 		char *pattern = expand_macros(dataptr);
 		assert(pattern);
-		if (*pattern != '/') {
-			if (macro_id(pattern) != -1) { // macro is valid, but was not resolved
-				struct stat s;
-				if (!nowhitelist_flag && stat(cfg.homedir, &s) == 0) {
-					unresolved_macro = 1;
-					if (!arg_quiet) {
-						fprintf(stderr, "***\n");
-						fprintf(stderr, "*** Warning: cannot whitelist %s directory\n", pattern);
-						fprintf(stderr, "*** Any file saved in this directory will be lost when the sandbox is closed.\n");
-						fprintf(stderr, "***\n");
-					}
-				}
-				entry = entry->next;
-				free(pattern);
-				continue;
-			}
-			whitelist_err(pattern);
-		}
 
 		if (arg_debug || arg_debug_whitelists)
 			printf("%s pattern: %s\n", (nowhitelist_flag)? "nowhitelist": "whitelist", pattern);
@@ -644,10 +627,7 @@ void fs_whitelist(void) {
 		}
 
 		// whitelist globbing
-		errno = 0;
 		if (glob(pattern, globflags, NULL, &globbuf) != 0) {
-			if (errno)
-				perror("glob");
 			fprintf(stderr, "Error: failed to glob pattern %s\n", pattern);
 			exit(1);
 		}
@@ -657,8 +637,7 @@ void fs_whitelist(void) {
 	}
 
 	// return if there are no whitelist commands
-	if (globbuf.gl_pathc == 0) {
-		// release memory
+	if ((globflags & GLOB_APPEND) == 0) {
 		size_t i;
 		for (i = 0; i < nowhitelist_c; i++)
 			free(nowhitelist[i]);
@@ -668,13 +647,13 @@ void fs_whitelist(void) {
 	}
 
 	// allocate memory
-	topdirs = malloc(topdirs_m * sizeof(*topdirs));
+	topdirs = calloc(topdirs_m, sizeof(*topdirs));
 	if (!topdirs)
 		errExit("malloc");
-	whitelist = malloc(whitelist_m * sizeof(*whitelist));
+	whitelist = calloc(whitelist_m, sizeof(*whitelist));
 	if (!whitelist)
 		errExit("malloc");
-	linklist = malloc(linklist_m * sizeof(*linklist));
+	linklist = calloc(linklist_m, sizeof(*linklist));
 	if (!linklist)
 		errExit("malloc");
 
@@ -691,6 +670,21 @@ void fs_whitelist(void) {
 		// filter nowhitelisted entries
 		if (nowhitelist_match(globbuf.gl_pathv[i]))
 			continue;
+
+		if (globbuf.gl_pathv[i][0] != '/') { // absolute path?
+			if (macro_id(globbuf.gl_pathv[i]) != -1) { // got a valid but unresolved macro
+				struct stat s;
+				if (!arg_quiet && stat(cfg.homedir, &s) == 0) {
+					fprintf(stderr, "***\n");
+					fprintf(stderr, "*** Warning: cannot whitelist %s directory\n", globbuf.gl_pathv[i]);
+					fprintf(stderr, "*** Any file saved in this directory will be lost when the sandbox is closed.\n");
+					fprintf(stderr, "***\n");
+				}
+				store_topdir(cfg.homedir); // mount a tmpfs on top level directory of homedir
+				continue;
+			}
+			whitelist_err(globbuf.gl_pathv[i]);
+		}
 
 		// remove consecutive slashes, trailing slash and single dots
 		char *path = clean_pathname(globbuf.gl_pathv[i]);
@@ -737,8 +731,6 @@ void fs_whitelist(void) {
 	EUID_USER();
 
 	// mount tmpfs on top directories
-	if (unresolved_macro)
-		store_topdir(cfg.homedir);
 	EUID_ROOT();
 	mkdir_attr(RUN_WHITELIST_DIR, 0755, 0, 0);
 	for (i = 0; i < topdirs_c; i++) {
