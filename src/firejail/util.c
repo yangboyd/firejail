@@ -445,7 +445,7 @@ int is_link(const char *fname) {
 			return 1;
 		if (S_ISDIR(s.st_mode)) {
 			// remove trailing slashes and single dots and try again
-			char *p = clean_pathname(fname);
+			p = clean_pathname(fname);
 			assert(p);
 			if (lstat(p, &s) == 0) {
 				if (S_ISLNK(s.st_mode)) {
