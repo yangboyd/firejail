@@ -367,10 +367,10 @@ static void init_tmpfs(const char *dir, int fd) {
 	if (strncmp(dir, cfg.homedir, len) == 0) {
 		if (cfg.homedir[len] == '/') {
 			assert(init_home == 0);
+			// open home directory
 			char *newname;
 			if (asprintf(&newname, "%s%s", RUN_WHITELIST_DIR, cfg.homedir) == -1)
 				errExit("asprintf");
-			// open home directory
 			int fd = safe_fd(newname, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
 			free(newname);
 			if (fd == -1) {
@@ -580,7 +580,7 @@ void fs_whitelist(void) {
 	// allocate memory for nowhitelist
 	nowhitelist = calloc(nowhitelist_m, sizeof(*nowhitelist));
 	if (!nowhitelist)
-		errExit("malloc");
+		errExit("calloc");
 
 	int globflags = GLOB_PERIOD | GLOB_NOSORT | GLOB_NOCHECK;
 	glob_t globbuf;
@@ -624,6 +624,7 @@ void fs_whitelist(void) {
 		}
 
 		// whitelist globbing
+		EUID_ASSERT();
 		if (glob(pattern, globflags, NULL, &globbuf) != 0) {
 			fprintf(stderr, "Error: failed to glob pattern %s\n", pattern);
 			exit(1);
@@ -646,13 +647,13 @@ void fs_whitelist(void) {
 	// allocate memory
 	topdirs = calloc(topdirs_m, sizeof(*topdirs));
 	if (!topdirs)
-		errExit("malloc");
+		errExit("calloc");
 	whitelist = calloc(whitelist_m, sizeof(*whitelist));
 	if (!whitelist)
-		errExit("malloc");
+		errExit("calloc");
 	linklist = calloc(linklist_m, sizeof(*linklist));
 	if (!linklist)
-		errExit("malloc");
+		errExit("calloc");
 
 	size_t i;
 	for (i = 0; i < globbuf.gl_pathc; i++) {
