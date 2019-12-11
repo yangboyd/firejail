@@ -467,7 +467,6 @@ static void check_topdir(const char *path) {
 }
 
 static size_t store_topdir(const char *path) {
-	EUID_ASSERT();
 	assert(path);
 	char *dup = strdup(path);
 	if (!dup)
@@ -506,7 +505,6 @@ static size_t store_topdir(const char *path) {
 }
 
 static void store_whitelist(const char *path) {
-	EUID_ASSERT();
 	assert(path);
 	char *dup = strdup(path);
 	if (!dup)
@@ -544,7 +542,6 @@ static void create_symlink(link_t link) {
 }
 
 static void store_symlink(const char *path) {
-	EUID_ASSERT();
 	assert(path && path[0] == '/');
 	char buf[MAXBUF];
 
@@ -699,6 +696,7 @@ void fs_whitelist(void) {
 		size_t len = store_topdir(path);
 
 		// resolve path and add it to the whitelist array ...
+		EUID_ASSERT();
 		char *rp = realpath(path, NULL);
 		if (rp) {
 			// ... but only if it is not in /run/firejail
@@ -728,10 +726,8 @@ void fs_whitelist(void) {
 	EUID_ROOT();
 	int aflag = store_asoundrc();
 	int xflag = store_xauthority();
-	EUID_USER();
 
 	// mount tmpfs on top directories
-	EUID_ROOT();
 	mkdir_attr(RUN_WHITELIST_DIR, 0755, 0, 0);
 	for (i = 0; i < topdirs_c; i++) {
 		mount_tmpfs(topdirs[i]);
@@ -771,7 +767,6 @@ void fs_whitelist(void) {
 		free(linklist[i].src);
 		free(linklist[i].dst);
 	}
-	EUID_USER();
 	free(linklist);
 
 	// release nowhitelist memory
@@ -779,7 +774,6 @@ void fs_whitelist(void) {
 		free(nowhitelist[i]);
 	free(nowhitelist);
 
-	EUID_ROOT();
 	// mask RUN_WHITELIST_DIR
 	if (mount("tmpfs", RUN_WHITELIST_DIR, "tmpfs", MS_NOSUID | MS_STRICTATIME,  "mode=755,gid=0") < 0)
 		errExit("masking " RUN_WHITELIST_DIR);
