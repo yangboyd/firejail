@@ -54,13 +54,6 @@ static link_t *linklist = NULL;
 static size_t linklist_c = 0;
 static size_t linklist_m = 32;
 
-// home directory initialization
-extern void skel(const char *homedir, uid_t u, gid_t g);
-extern int store_xauthority(void);
-extern int store_asoundrc(void);
-extern void copy_xauthority(void);
-extern void copy_asoundrc(void);
-
 
 
 static void whitelist_err(const char *path) {

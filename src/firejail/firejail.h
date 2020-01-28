@@ -513,6 +513,11 @@ void fs_dev_disable_dvd(void);
 void fs_dev_disable_u2f(void);
 
 // fs_home.c
+void skel(const char *homedir, uid_t u, gid_t g);
+int store_xauthority(void);
+int store_asoundrc(void);
+void copy_xauthority(void);
+void copy_asoundrc(void);
 // private mode (--private)
 void fs_private(void);
 // private mode (--private=homedir)
