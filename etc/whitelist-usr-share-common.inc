@@ -10,6 +10,7 @@ whitelist /usr/share/crypto-policies
 whitelist /usr/share/cursors
 whitelist /usr/share/dconf
 whitelist /usr/share/distro-info
+whitelist /usr/share/doc
 whitelist /usr/share/drirc.d
 whitelist /usr/share/enchant
 whitelist /usr/share/enchant-2
