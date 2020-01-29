@@ -315,83 +315,98 @@ static int nowhitelist_match(const char *path) {
 	return 0;
 }
 
+// initialize tmpfs mounted on /tmp
+static void init_tmp(void) {
+	// create empty user-owned /tmp/user/$UID directory
+	char *env = getenv("TMP");
+	if (env) {
+		char *pamtmpdir;
+		if (asprintf(&pamtmpdir, "/tmp/user/%u", getuid()) == -1)
+			errExit("asprintf");
+		if (strcmp(env, pamtmpdir) == 0) {
+			mkdir_attr("/tmp/user", 0711, 0, 0);
+			fs_logger2("mkdir", "/tmp/user");
+			mkdir_attr(pamtmpdir, 0700, getuid(), 0);
+			fs_logger2("mkdir", pamtmpdir);
+		}
+		free(pamtmpdir);
+	}
+}
+
+// initialize tmpfs mounted on /run
+static void init_run(int fd) {
+	// create empty user-owned /run/user/$UID directory
+	mkdir_attr("/run/user", 0755, 0, 0);
+	fs_logger2("mkdir", "/run/user");
+	char *runuser;
+	if (asprintf(&runuser, "/run/user/%u", getuid()) == -1)
+		errExit("asprintf");
+	mkdir_attr(runuser, 0700, getuid(), getgid());
+	fs_logger2("mkdir", runuser);
+	free(runuser);
+
+	// create /run/firejail directory and mount it
+	// using the passed in file descriptor
+	mkdir_attr(RUN_FIREJAIL_DIR, 0755, 0, 0);
+	assert(fd != -1);
+	char *proc;
+	if (asprintf(&proc, "/proc/self/fd/%d", fd) == -1)
+		errExit("asprintf");
+	if (mount(proc, RUN_FIREJAIL_DIR, NULL, MS_BIND|MS_REC, NULL) < 0)
+		errExit("mount bind");
+	free(proc);
+	fs_logger2("whitelist", RUN_FIREJAIL_DIR);
+}
+
+// create a new empty home directory
+static void create_home(void) {
+	assert(init_home == 0);
+
+	// we have a copy of user home directory in RUN_WHITELIST_DIR, open it
+	char *newname;
+	if (asprintf(&newname, "%s%s", RUN_WHITELIST_DIR, cfg.homedir) == -1)
+		errExit("asprintf");
+	int fd = safe_fd(newname, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+	free(newname);
+	if (fd == -1) {
+		if (errno == ENOENT) // nothing to do if home directory does not exist
+			return;
+		fprintf(stderr, "Error: cannot open home directory\n");
+		exit(1);
+	}
+	// read directory ownership and permissions
+	struct stat s;
+	if (fstat(fd, &s) == -1)
+		errExit("fstat");
+	close(fd);
+
+	// create a new home directory
+	assert(strncmp(cfg.homedir, RUN_FIREJAIL_DIR, strlen(RUN_FIREJAIL_DIR)) != 0 ||
+		  (cfg.homedir[strlen(RUN_FIREJAIL_DIR)] != '/' && cfg.homedir[strlen(RUN_FIREJAIL_DIR)] != '\0'));
+	int rv = mkdir(cfg.homedir, 0700);
+	if (rv == -1) {
+		if (mkpath_as_root(cfg.homedir) == -1)
+			errExit("mkpath");
+		if ((rv = mkdir(cfg.homedir, 0700)) == -1 && errno != EEXIST)
+			errExit("mkdir");
+	}
+	// set ownership and permissions
+	if (rv == 0 && set_perms(cfg.homedir, s.st_uid, s.st_gid, s.st_mode & 07777))
+		errExit("chmod/chown");
+}
+
 static void init_tmpfs(const char *dir, int fd) {
 	assert(dir);
+
+	if (strcmp(dir, "/tmp") == 0)
+		init_tmp();
+	else if (strcmp(dir, "/run") == 0)
+		init_run(fd);
+
 	size_t len = strlen(dir);
-	// create empty user-owned /tmp/user/$UID directory (pam-tmpdir)
-	if (strcmp(dir, "/tmp") == 0) {
-		char *env = getenv("TMP");
-		if (env) {
-			char *pamtmpdir;
-			if (asprintf(&pamtmpdir, "/tmp/user/%u", getuid()) == -1)
-				errExit("asprintf");
-			if (strcmp(env, pamtmpdir) == 0) {
-				mkdir_attr("/tmp/user", 0711, 0, 0);
-				fs_logger2("mkdir", "/tmp/user");
-				mkdir_attr(pamtmpdir, 0700, getuid(), 0);
-				fs_logger2("mkdir", pamtmpdir);
-			}
-			free(pamtmpdir);
-		}
-	}
-	// create empty user-owned /run/user/$UID directory
-	// whitelist /run/firejail directory using a file descriptor
-	else if (strcmp(dir, "/run") == 0) {
-		mkdir_attr("/run/user", 0755, 0, 0);
-		fs_logger2("mkdir", "/run/user");
-		char *runuser;
-		if (asprintf(&runuser, "/run/user/%u", getuid()) == -1)
-			errExit("asprintf");
-		mkdir_attr(runuser, 0700, getuid(), getgid());
-		fs_logger2("mkdir", runuser);
-		free(runuser);
-
-		mkdir_attr(RUN_FIREJAIL_DIR, 0755, 0, 0);
-		char *proc;
-		if (asprintf(&proc, "/proc/self/fd/%d", fd) == -1)
-			errExit("asprintf");
-		if (mount(proc, RUN_FIREJAIL_DIR, NULL, MS_BIND|MS_REC, NULL) < 0)
-			errExit("mount bind");
-		free(proc);
-		fs_logger2("whitelist", RUN_FIREJAIL_DIR);
-	}
-
-	// create empty home directory
 	if (strncmp(dir, cfg.homedir, len) == 0) {
-		if (cfg.homedir[len] == '/') {
-			assert(init_home == 0);
-			// open home directory
-			char *newname;
-			if (asprintf(&newname, "%s%s", RUN_WHITELIST_DIR, cfg.homedir) == -1)
-				errExit("asprintf");
-			int fd = safe_fd(newname, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-			free(newname);
-			if (fd == -1) {
-				if (errno == ENOENT) // nothing to do if home directory does not exist
-					return;
-				fprintf(stderr, "Error: cannot open home directory\n");
-				exit(1);
-			}
-			// read directory ownership and permissions
-			struct stat s;
-			if (fstat(fd, &s) == -1)
-				errExit("fstat");
-			close(fd);
-
-			// create a new home directory
-			assert(strncmp(cfg.homedir, RUN_FIREJAIL_DIR, strlen(RUN_FIREJAIL_DIR)) != 0 ||
-			      (cfg.homedir[strlen(RUN_FIREJAIL_DIR)] != '/' && cfg.homedir[strlen(RUN_FIREJAIL_DIR)] != '\0'));
-			int rv = mkdir(cfg.homedir, 0700);
-			if (rv == -1) {
-				if (mkpath_as_root(cfg.homedir) == -1)
-					errExit("mkpath");
-				if ((rv = mkdir(cfg.homedir, 0700)) == -1 && errno != EEXIST)
-					errExit("mkdir");
-			}
-			// set ownership and permissions
-			if (rv == 0 && set_perms(cfg.homedir, s.st_uid, s.st_gid, s.st_mode & 07777))
-				errExit("chmod/chown");
-		}
+		if (cfg.homedir[len] == '/')
+			create_home();
 		else if (cfg.homedir[len] != '\0')
 			return;
 
@@ -401,7 +416,6 @@ static void init_tmpfs(const char *dir, int fd) {
 
 static void mount_tmpfs(const char *dir) {
 	assert(dir);
-	int fd = -1;
 
 	struct stat s;
 	if (lstat(dir, &s) == 0) {
@@ -417,8 +431,9 @@ static void mount_tmpfs(const char *dir) {
 			if (mount(dir, dest, NULL, MS_BIND|MS_REC, NULL) < 0)
 				errExit("mount bind");
 
-			// open /run/firejail, so we can bring back the directory after a tmpfs is mounted on /run
+			int fd = -1;
 			if (strcmp(dir, "/run") == 0) {
+				// open /run/firejail, so we can bring back the directory after mounting a tmpfs
 				fd = safe_fd(RUN_FIREJAIL_DIR, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
 				if (fd == -1)
 					errExit("opening " RUN_FIREJAIL_DIR);
@@ -428,11 +443,13 @@ static void mount_tmpfs(const char *dir) {
 			if (arg_debug_whitelists && !arg_debug) // fs_tmpfs() prints a debug message itself
 				printf("Mounting tmpfs on %s\n", dir);
 			fs_tmpfs(dir, 0);
+
+			// initialize the tmpfs
 			init_tmpfs(dir, fd);
 
-			free(dest);
 			if (fd != -1)
 				close(fd);
+			free(dest);
 		}
 		// if dir is a symbolic link, firejail does nothing but printing messages
 		// (paths are not added to the whitelist array, and mkpath always fails with -1)
@@ -617,7 +634,6 @@ void fs_whitelist(void) {
 		}
 
 		// whitelist globbing
-		EUID_ASSERT();
 		if (glob(pattern, globflags, NULL, &globbuf) != 0) {
 			fprintf(stderr, "Error: failed to glob pattern %s\n", pattern);
 			exit(1);
@@ -729,7 +745,7 @@ void fs_whitelist(void) {
 	}
 	free(topdirs);
 
-	// more home directory initialization: ~/.asoundrc and ~/.Xauthority
+	// home directory initialization: restore ~/.asoundrc and ~/.Xauthority
 	if (init_home) {
 		if (xflag)
 			copy_xauthority();
