@@ -434,7 +434,7 @@ static void mount_tmpfs(const char *dir) {
 			int fd = -1;
 			if (strcmp(dir, "/run") == 0) {
 				// open /run/firejail, so we can bring back the directory after mounting a tmpfs
-				fd = safe_fd(RUN_FIREJAIL_DIR, O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+				fd = open(RUN_FIREJAIL_DIR, O_PATH|O_DIRECTORY|O_CLOEXEC);
 				if (fd == -1)
 					errExit("opening " RUN_FIREJAIL_DIR);
 			}
@@ -709,7 +709,7 @@ void fs_whitelist(void) {
 		EUID_ASSERT();
 		char *rp = realpath(path, NULL);
 		if (rp) {
-			// ... but only if it is not in /run/firejail
+			// ... but only if it is not in /run/firejail (partially redundant)
 			if (strncmp(rp, RUN_FIREJAIL_DIR, strlen(RUN_FIREJAIL_DIR)) == 0 &&
 			   (rp[strlen(RUN_FIREJAIL_DIR)] == '/' || rp[strlen(RUN_FIREJAIL_DIR)] == '\0'))
 				whitelist_err(path);
